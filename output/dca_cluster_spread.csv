@@ -1,0 +1,11 @@
+"dca_group","n","top_cluster","top_cluster_share","clusters_for_80pct"
+"Pedestrian",14901,"6",0.830011408630293,1
+"Vehicles from adjacent directions (intersection)",28032,"1",0.408854166666667,3
+"Vehicles from opposing directions",22103,"1",0.42451250961408,4
+"Vehicles from same direction",47920,"1",0.380258764607679,4
+"Manoeuvring",10742,"3",0.371253025507354,4
+"Overtaking",2254,"2",0.378438331854481,4
+"On path",10866,"3",0.273697772869501,4
+"Off path on straight",30180,"2",0.372166998011928,4
+"Off path on curve",13010,"2",0.52598001537279,3
+"Passenger and miscellaneous",2031,"2",0.291482028557361,5

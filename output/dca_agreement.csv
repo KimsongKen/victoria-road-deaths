@@ -1,0 +1,6 @@
+"comparison","ARI","NMI"
+"Clusters vs DCA group (10)",0.114708367327272,0.178645831271085
+"Clusters vs DCA code (81)",0.0653694755713151,0.126087557645462
+"Clusters vs accident type (9)",0.12891435525902,0.173228221039335
+"DCA group vs accident type (reference)",0.268902102666807,0.408090904654404
+"Shuffled clusters vs DCA group (baseline, mean of 20)",-5.78775142890114e-05,7.03716954081997e-05

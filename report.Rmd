@@ -1,0 +1,436 @@
+---
+title: "Where Victoria's road deaths really happen"
+subtitle: "What crash *situations* reveal that the official crash categories hide: Victorian Crash Data, 2012 to September 2024"
+author: "Group members: (to fill in)"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    number_sections: true
+    theme: flatly
+    css: report.css
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.align = "center")
+source("R/00_config.R")
+library(knitr); library(leaflet)
+crash <- readRDS(out_path("crash_clustered.rds"))
+val   <- readRDS(out_path("validation.rds"))
+dca   <- readRDS(out_path("dca_comparison.rds"))
+prof  <- readRDS(out_path("profiles.rds"))
+P <- prof$profiles; S <- prof$stories
+pct <- function(x, d = 0) paste0(formatC(100 * x, format = "f", digits = d), "%")
+num <- function(x) format(round(x), big.mark = ",")
+k <- val$k
+
+years <- as.numeric(diff(range(crash$date)) + 1) / 365.25
+total_deaths  <- sum(crash$n_killed)
+total_serious <- sum(crash$n_serious)
+P <- P |> mutate(deaths_per_1000 = 1000 * deaths / n, deaths_per_year = deaths / years,
+                 serious_per_year = serious / years, cl = as.character(cluster))
+
+# Labels, colours and helpers shared by every table and figure.
+cols  <- situation_colours(k)
+lab   <- setNames(sprintf("%s. %s", P$cl, P$name), P$cl)
+short <- setNames(tolower(sub(",[^,]*$", "", P$name)), P$cl)       # first two traits
+swatch <- function(cl) sprintf('<span class="sw" style="background:%s"></span>%s', cols[cl], lab[cl])
+to_situation <- function(x) gsub("\\bcluster\\b", "situation", gsub("\\bCluster\\b", "Situation", x))
+tbl <- function(df, ...) kable(df, format = "html", escape = FALSE, row.names = FALSE,
+                               table.attr = 'class="table rtable"', ...)
+theme_report <- function(base = 12) theme_minimal(base_size = base) +
+  theme(plot.title = element_text(face = "bold", size = base + 2), plot.title.position = "plot",
+        plot.subtitle = element_text(colour = "grey35"), panel.grid.minor = element_blank(),
+        panel.grid.major.y = element_blank(), axis.text = element_text(colour = "grey25"))
+
+# Clusters referred to in the text, found by rule so the text follows the data.
+find_cl <- function(pattern) P$cl[grepl(pattern, P$name)][1]
+c_rural <- P$cl[which.max(P$rural)]
+c_night <- find_cl("night")
+c_ped   <- P$cl[which.max(P$top_dca_group == "Pedestrian" & P$top_dca_share > 0.5)]
+c_bike  <- find_cl("Cyclist")
+c_rain  <- find_cl("Rain")
+c_poor  <- find_cl("Poorly recorded")
+c_big   <- P$cl[which.max(P$n)]
+top2    <- P$cl[order(-P$deaths)][1:2]
+pr <- function(cl) P[P$cl == cl, ]
+
+# The official category hiding the widest range of death rates across situations
+# (situations with 500+ crashes in that category; the poorly recorded cluster excluded).
+dca_split <- crash |>
+  filter(as.character(cluster) != c_poor) |>
+  group_by(dca_group, cluster) |>
+  summarise(n = n(), deaths = sum(n_killed), fatal_rate = mean(fatal), .groups = "drop") |>
+  filter(n >= 500) |>
+  mutate(deaths_per_1000 = 1000 * deaths / n)
+split_rank <- dca_split |> group_by(dca_group) |>
+  summarise(ratio = max(deaths_per_1000) / min(deaths_per_1000)) |> arrange(-ratio)
+ex_group <- as.character(split_rank$dca_group[1])
+ex <- dca_split |> filter(dca_group == ex_group) |> arrange(-deaths_per_1000)
+ex_hi <- ex[1, ]; ex_lo <- ex[nrow(ex), ]
+fold  <- round(ex_hi$deaths_per_1000 / ex_lo$deaths_per_1000)
+
+ag <- dca$agree; sm <- dca$sev_models
+auc_dca  <- sm$AUC[sm$outcome == "fatal" & sm$model == "DCA group only"]
+auc_both <- sm$AUC[sm$outcome == "fatal" & sm$model == "DCA group + cluster"]
+top2_deaths <- sum(P$share_of_deaths[P$cl %in% top2])
+top2_share  <- sum(P$share[P$cl %in% top2])
+```
+
+# Summary {-}
+
+<div class="stats">
+<div class="stat"><div class="num">`r num(total_deaths)`</div><div class="lbl">people killed in Victorian road crashes, `r format(min(crash$date), "%Y")`–`r format(max(crash$date), "%Y")`</div></div>
+<div class="stat"><div class="num">`r round(total_deaths / years)`</div><div class="lbl">deaths every year, and `r num(total_serious / years)` serious injuries</div></div>
+<div class="stat accent"><div class="num">`r pct(top2_deaths)`</div><div class="lbl">of deaths come from just two situations, which make up only `r pct(top2_share)` of crashes</div></div>
+<div class="stat accent"><div class="num">`r fold`×</div><div class="lbl">difference in death rate hidden inside a single official crash category</div></div>
+</div>
+
+::: {.callout}
+**Question.** If Victoria could make one kind of road situation safer, which would save the most lives?
+
+**Answer.** Grouping `r num(nrow(crash))` police-reported crashes by the *situation* they happened in, rather than the
+official crash category, shows that deaths are heavily concentrated in two situations:
+
+* **High-speed roads, mostly rural, often a single vehicle:** `r pct(pr(c_rural)$share)` of crashes but
+  **`r num(pr(c_rural)$deaths)` deaths (`r pct(pr(c_rural)$share_of_deaths)`)**, about `r round(pr(c_rural)$deaths_per_year)` a year.
+* **Night-time, often young drivers:** `r pct(pr(c_night)$share)` of crashes but
+  **`r num(pr(c_night)$deaths)` deaths (`r pct(pr(c_night)$share_of_deaths)`)**.
+
+The **most common** situation, city intersections (`r pct(pr(c_big)$share)` of crashes), is **not** the most deadly.
+A high-speed rural crash is `r sprintf("%.1f", pr(c_rural)$deaths_per_1000 / pr(c_big)$deaths_per_1000)` times as
+likely to kill someone.
+:::
+
+::: {.callout .key}
+**Why it matters.** Victoria's official crash categories (DCA codes) record *how* a crash happened, such as "head-on"
+or "ran off the road", but not the situation. Within the single category "`r ex_group`", crashes in one situation
+killed **`r round(ex_hi$deaths_per_1000)` people per 1,000 crashes** and in another only
+**`r sprintf("%.1f", ex_lo$deaths_per_1000)`**. Counting crashes by category points attention at where crashes are
+*common*; counting deaths by situation points it at where people *die*.
+
+**What should be done** (Section 6): make high-speed rural roads and night-time driving the two priority situations,
+keep protecting pedestrians in the inner city, and improve how police record crash conditions.
+:::
+
+# Why this question matters
+
+Road-safety resources are limited, so every dollar spent on one location or campaign is a dollar not spent elsewhere.
+Agencies usually report crashes using the police **Definition for Classifying Accidents (DCA)**, which describes the
+movement of the vehicles and people involved (rear-end, right-turn, pedestrian struck, off road on a curve...).
+
+That tells you *how* a crash happened but not *what situation the driver was in*: the road, speed limit, time, light,
+weather, and who was involved. Two crashes with the same DCA code can be completely different events. One is a 50 km/h
+side-swipe in a city street; the other is a 110 km/h head-on on a dark rural highway.
+
+We asked four questions:
+
+1. What crash **situations** emerge if we let the data group crashes by their conditions?
+2. **Which situations cost the most lives**, and where in Victoria do they happen?
+3. Do these situations repeat the official categories, or **reveal risk the categories miss**?
+4. What does that mean for **where road-safety effort should go**?
+
+# The answer: lives lost in each situation
+
+We grouped all `r num(nrow(crash))` crashes into `r k` situations using 17 descriptions of the conditions (Section 7
+explains how). The grouping didn't use the outcome, the official category or the location. Those were kept aside so we
+could test the situations against them.
+
+```{r lives-chart, fig.width=10.5, fig.height=5}
+ord <- P$cl[order(P$share_of_deaths)]
+lives <- P |>
+  select(cl, share, share_of_deaths) |>
+  pivot_longer(-cl, names_to = "measure", values_to = "value") |>
+  mutate(measure = factor(measure, c("share_of_deaths", "share"), c("Share of deaths", "Share of crashes")),
+         cl = factor(cl, levels = ord))
+ggplot(lives, aes(value, cl, fill = measure)) +
+  geom_col(position = position_dodge(width = 0.78), width = 0.72) +
+  geom_text(aes(label = pct(value)), position = position_dodge(width = 0.78), hjust = -0.15, size = 3.4,
+            colour = "grey20") +
+  scale_y_discrete(labels = function(x) str_wrap(lab[x], 42)) +
+  scale_x_continuous(labels = scales::percent, expand = expansion(c(0, 0.1))) +
+  scale_fill_manual(values = c("Share of crashes" = "#b8c4d1", "Share of deaths" = "#D1495B"),
+                    breaks = c("Share of crashes", "Share of deaths")) +
+  labs(title = "Some situations kill far more people than their crash numbers suggest",
+       subtitle = sprintf("%s people killed, %s to %s", num(total_deaths), format(min(crash$date), "%Y"),
+                          format(max(crash$date), "%Y")),
+       x = NULL, y = NULL, fill = NULL) +
+  theme_report() + theme(legend.position = "top", legend.justification = "left")
+```
+
+```{r lives-table}
+tbl(P |> arrange(-deaths) |>
+      transmute(Situation = swatch(cl), Crashes = num(n), `People killed` = num(deaths),
+                `Killed per year` = round(deaths_per_year), `Seriously injured per year` = num(serious_per_year),
+                `Deaths per 1,000 crashes` = sprintf("%.1f", deaths_per_1000),
+                `Share of all deaths` = pct(share_of_deaths)),
+    align = "lrrrrrr")
+```
+
+Three things stand out:
+
+* **Danger is not where crashes are most common.** City intersection crashes (situation `r c_big`) are the most
+  frequent, but they kill `r sprintf("%.1f", pr(c_big)$deaths_per_1000)` people per 1,000 crashes. High-speed rural
+  crashes kill `r sprintf("%.1f", pr(c_rural)$deaths_per_1000)`, night-time crashes
+  `r sprintf("%.1f", pr(c_night)$deaths_per_1000)`, and pedestrian crashes `r sprintf("%.1f", pr(c_ped)$deaths_per_1000)`.
+* **Speed and darkness are the common thread** in the two deadliest situations. Both are cases where a mistake is
+  harder to survive or harder to see coming.
+* **Cyclist crashes are frequent but rarely fatal.** Situation `r c_bike` holds `r pct(pr(c_bike)$share)` of crashes
+  but `r pct(pr(c_bike)$share_of_deaths)` of deaths. These crashes still cause
+  `r num(pr(c_bike)$serious_per_year)` serious injuries a year.
+
+```{r severity-fig, out.width="100%"}
+include_graphics(fig_path("severity_by_cluster.png"))
+```
+
+# What the official categories miss
+
+## The same official category, a different chance of dying
+
+```{r dca-example}
+tbl(ex |> transmute(Situation = swatch(as.character(cluster)), Crashes = num(n), `People killed` = deaths,
+                    `Deaths per 1,000 crashes` = sprintf("%.1f", deaths_per_1000),
+                    `Crashes that killed someone` = pct(fatal_rate, 1)),
+    align = "lrrrr",
+    caption = sprintf("Every crash in this table has the same official category: \"%s\".", ex_group))
+```
+
+::: {.callout .key}
+Every crash above has the same official label, "`r ex_group`". In the **`r short[as.character(ex_hi$cluster)]`**
+situation, **`r pct(ex_hi$fatal_rate, 1)` of them killed someone**. In the **`r short[as.character(ex_lo$cluster)]`**
+situation, `r pct(ex_lo$fatal_rate, 1)` did. A report that only counts crashes by category treats these as one
+problem. They are very different problems that need different solutions.
+:::
+
+## Situations and categories only partly overlap
+
+```{r heatmap, out.width="100%"}
+include_graphics(fig_path("dca_heatmap.png"))
+```
+
+The agreement between our situations and the official categories is low (adjusted Rand index
+`r sprintf("%.2f", ag$ARI[1])`, where 0 means no agreement and 1 means identical). The one clear exception is
+**pedestrians**: `r pct(pr(c_ped)$top_dca_share)` of situation `r c_ped` is the official "Pedestrian" category. When a
+pedestrian is involved, who was hit defines both groupings. Everywhere else, situations such as rain or darkness cut
+across every kind of crash movement.
+
+## Knowing the situation improves the prediction of deaths
+
+We tested whether the situation tells us anything about the outcome *beyond* the official category, using logistic
+regression to predict whether a crash was fatal.
+
+```{r sev-models}
+tbl(sm |> filter(outcome == "fatal") |>
+      transmute(`Predicting a fatal crash using...` = to_situation(model),
+                `AUC (0.5 = guessing, 1 = perfect)` = sprintf("%.3f", AUC),
+                `Improvement test (p-value)` = ifelse(is.na(lrt_p_cluster_added), "",
+                                                      format.pval(lrt_p_cluster_added, digits = 2))),
+    align = "lrr")
+```
+
+Adding the situation to the official category improves the prediction of fatal crashes
+(AUC `r sprintf("%.2f", auc_dca)` → `r sprintf("%.2f", auc_both)`), and the improvement is far beyond chance
+(likelihood-ratio test). **The situation carries life-or-death information that the official category doesn't
+record.** The prediction is still far from perfect, because the data doesn't include impact speed, seatbelt use or
+traffic volumes.
+
+# The seven situations, told as stories
+
+Each situation is described three ways: its **profile** (calculated from all its crashes), a **typical crash** (the
+most common value of each condition, combined into one picture) and a **real crash from the data** whose details are
+most typical of the situation. They're ordered from most deaths to fewest.
+
+```{r stories, results="asis"}
+for (j in order(-P$deaths)) {
+  cl <- P$cl[j]
+  hot <- P$deaths_per_1000[j] > 1000 * total_deaths / nrow(crash)
+  cat(sprintf("\n\n## Situation %s: %s\n\n", cl, P$name[j]))
+  cat(sprintf('<div class="card" style="--c:%s">\n<div class="meta">', cols[cl]))
+  cat(sprintf('<span class="pill%s">%s people killed (%s of all deaths)</span>', if (hot) " hot" else "",
+              num(P$deaths[j]), pct(P$share_of_deaths[j])))
+  cat(sprintf('<span class="pill%s">%.1f deaths per 1,000 crashes</span>', if (hot) " hot" else "", P$deaths_per_1000[j]))
+  cat(sprintf('<span class="pill">%s crashes (%s)</span><span class="pill">%s</span></div>\n',
+              num(P$n[j]), pct(P$share[j], 1), P$where[j]))
+  cat(sprintf('<div class="story"><b>Typical crash.</b> %s</div>\n', S$typical_story[j]))
+  cat(sprintf('<div class="story"><b>%s.</b> %s</div>\n', sub("\\):.*", ")", S$real_story[j]),
+              sub("^[^:]*: ", "", S$real_story[j])))
+  cat(sprintf('<p class="profile">%s</p>\n</div>\n', to_situation(S$description[j])))
+}
+```
+
+# Where it happens and who should act
+
+```{r region-fig, out.width="100%"}
+include_graphics(fig_path("region_by_cluster.png"))
+```
+
+```{r region-table}
+tbl(P |> arrange(-deaths) |>
+      transmute(Situation = swatch(cl), `Most crashes in` = top_lgas, `Most over-represented in` = overrep_lgas),
+    caption = "\"Over-represented\" compares a situation's share of crashes in a council area (LGAs with 300+ crashes) with its share statewide: x2.0 means twice as common as average.")
+```
+
+```{r static-map, out.width="100%"}
+include_graphics(fig_path("map_by_cluster.png"))
+```
+
+## Interactive map
+
+Use the boxes in the top-right corner to turn situations on and off. Every fatal crash is shown, larger and outlined,
+together with 8,000 randomly chosen other crashes. Click a point for details. The Shiny app (`shiny::runApp("app")`)
+has the full version with year, severity and region filters and story cards.
+
+```{r leaflet}
+set.seed(SEED)
+m <- crash |> filter(!is.na(lat)) |>
+  (\(d) bind_rows(d |> filter(!fatal) |> slice_sample(n = 8000), d |> filter(fatal)))() |>
+  mutate(cl = as.character(cluster))
+grp <- setNames(sprintf('<span class="sw" style="background:%s"></span>%s', cols[P$cl], lab[P$cl]), P$cl)
+map <- leaflet(width = "100%", height = 560, options = leafletOptions(preferCanvas = TRUE)) |>
+  addProviderTiles(BASEMAP) |>
+  addTiles(urlTemplate = BASEMAP_LABELS, options = tileOptions(pane = "overlayPane")) |>
+  fitBounds(141, -39.2, 150, -34)
+for (cl in P$cl) {
+  d <- m[m$cl == cl, ]
+  map <- map |>
+    addCircleMarkers(data = d, lng = ~lon, lat = ~lat, group = grp[[cl]],
+                     radius = ~ifelse(fatal, 4, 2.5), stroke = ~fatal, color = "#ffffff", weight = 0.8,
+                     fillColor = cols[[cl]], fillOpacity = ~ifelse(fatal, 0.95, 0.6),
+                     popup = ~sprintf("<b>%s</b><br>%s, %s<br>%s, %s<br>%s<br><b>%s</b>",
+                                      lab[cl], format(date, "%d %b %Y"), time, lga, region, dca_desc, severity))
+}
+map |> addLayersControl(overlayGroups = unname(grp), options = layersControlOptions(collapsed = FALSE))
+```
+
+# Recommendations
+
+These recommendations follow from the evidence above. The *measures* are well-established road-safety approaches; our
+analysis shows **where** they would address the most harm, not how well each one works. That would need evaluation
+data we don't have.
+
+```{r recs, results="asis"}
+recs <- list(
+  list(cl = c_rural, title = "Make high-speed rural roads more forgiving",
+       ev = sprintf("%s deaths (%s of all), about %d a year · %.1f deaths per 1,000 crashes · %s of these crashes are rural · most over-represented in %s",
+                    num(pr(c_rural)$deaths), pct(pr(c_rural)$share_of_deaths), round(pr(c_rural)$deaths_per_year),
+                    pr(c_rural)$deaths_per_1000, pct(pr(c_rural)$rural), pr(c_rural)$overrep_lgas),
+       do = "Protective infrastructure (barriers, rumble strips, sealed shoulders) and speed management on high-speed roads where single-vehicle crashes cluster.",
+       who = c("Department of Transport and Planning")),
+  list(cl = c_night, title = "Target night-time driving, especially by young drivers",
+       ev = sprintf("%s deaths (%s of all) · %.1f deaths per 1,000 crashes · a driver or rider aged 16-25 involved in nearly half",
+                    num(pr(c_night)$deaths), pct(pr(c_night)$share_of_deaths), pr(c_night)$deaths_per_1000),
+       do = "Night-time conditions in graduated licensing, better lighting at night-time crash locations, and enforcement focused on evening and late-night hours.",
+       who = c("Licensing authority", "Road-safety campaigns", "Victoria Police")),
+  list(cl = c_ped, title = "Keep protecting pedestrians in the inner city",
+       ev = sprintf("%s deaths · %.1f deaths per 1,000 crashes · concentrated in %s",
+                    num(pr(c_ped)$deaths), pr(c_ped)$deaths_per_1000, pr(c_ped)$overrep_lgas),
+       do = "Lower speeds and safer crossings where pedestrians and traffic mix.",
+       who = c("Local councils", "Department of Transport and Planning")),
+  list(cl = c_rain, title = "Treat the roads where rain turns deadly",
+       ev = sprintf("%s deaths · %.1f deaths per 1,000 crashes · over-represented in %s",
+                    num(pr(c_rain)$deaths), pr(c_rain)$deaths_per_1000, pr(c_rain)$overrep_lgas),
+       do = "Skid-resistant surfacing and wet-weather warnings on the most affected roads.",
+       who = c("Department of Transport and Planning", "Local councils")),
+  list(cl = c_poor, title = "Record every crash fully",
+       ev = sprintf("%s of crashes have weather, surface or speed zone missing · they are the least severe, so minor crashes are documented least",
+                    pct(pr(c_poor)$share)),
+       do = "Make weather, surface and speed zone mandatory in police crash reports, so future analysis isn't biased toward serious crashes.",
+       who = c("Victoria Police"))
+)
+for (i in seq_along(recs)) {
+  r <- recs[[i]]
+  cat(sprintf(paste0('<div class="rec" style="--c:%s"><div class="n">%d</div><div>',
+                     '<h4>%s</h4><div class="ev">%s</div><div class="do">%s</div>',
+                     '<div class="who">Who could act: %s</div></div></div>\n'),
+              cols[[r$cl]], i, r$title, r$ev, r$do,
+              paste(sprintf("<span>%s</span>", r$who), collapse = " ")))
+}
+```
+
+::: {.callout}
+**The scale of the prize.** Every **10% reduction in deaths in the high-speed rural situation alone would mean about
+`r round(0.1 * pr(c_rural)$deaths_per_year)` fewer people killed each year**. That is simple arithmetic on the averages
+above, not a forecast.
+:::
+
+# How we did it
+
+## Data
+
+The Victorian Crash Data release has nine linked tables. We joined them in R (`R/01_prepare.R`) into one row per crash:
+the accident record, the location, the most adverse weather and road surface, flags for the vehicles involved
+(motorcycle, bicycle, heavy vehicle, the oldest vehicle's age, the strictest traffic control) and flags for the people
+involved (pedestrian, driver or rider aged 16-25 or 70+). The raw data is 168 MB and runs in R on a laptop in a few
+minutes; Hadoop was not needed. Missing values were kept as "Unknown" rather than dropped. That decision revealed the
+poorly-recorded situation.
+
+## Grouping crashes into situations
+
+```{r features}
+tbl(data.frame(
+  Condition = FEATURE_LABELS[CLUSTER_FEATURES],
+  Categories = sapply(CLUSTER_FEATURES, function(f) paste(sprintf("%s (%s)", levels(crash[[f]]),
+                      pct(prop.table(table(crash[[f]])))), collapse = ", "))))
+```
+
+Because the conditions are categories, not numbers, we used **Multiple Correspondence Analysis (MCA)**, the
+categorical version of PCA, to turn them into `r val$n_dims` numeric dimensions. We then grouped the crashes with
+**k-means**. The official category, accident type, severity and location were deliberately left out, so the
+comparisons in Sections 3 and 4 are fair tests rather than circular ones.
+
+We tested 4 to 14 groups and chose `r k`. To be chosen, a solution had to come back almost identically from different
+random starts and from different halves of the data. Among the stable solutions, `r k` gave the best-separated groups
+while still separating pedestrian, cyclist, night-time and wet-weather crashes. We also prototyped **Gower distance +
+PAM**, but its groups changed from sample to sample, so we only used it as a cross-check.
+
+```{r validation}
+tbl(data.frame(
+  Check = c("Same groups from different random starts (ARI, 1 = identical)",
+            "Same groups from different halves of the data (ARI)",
+            "Separation between groups (silhouette, -1 to 1)"),
+  Result = c(sprintf("%.2f", val$seed_stability), sprintf("%.2f", val$subsample_stability),
+             sprintf("%.2f", val$silhouette))), align = "lr")
+```
+
+The groups are very **stable** but not sharply **separated**. Crashes don't fall into perfectly distinct types,
+because most share common conditions (daylight, dry road, weekday). The situations are best read as reliable regions
+of a continuum, so we interpret their overall profiles, not individual crash assignments.
+
+## Comparing with the official categories
+
+We compared situations with DCA groups using cross-tables, the adjusted Rand index and normalised mutual information,
+and tested whether the situation adds predictive information about fatal crashes using logistic regression and a
+likelihood-ratio test (`R/03_compare_dca.R`). The stories in Section 4 are generated in R from each situation's
+statistics and from a real crash record (`R/04_profile_stories.R`).
+
+# Limitations
+
+* **No traffic volumes.** We know where people died, not how many trips were made. A situation with many deaths may
+  partly reflect a lot of driving. Deaths *per crash* (used throughout) is not affected by this.
+* **Recommendations show where, not what works.** The analysis identifies where harm is concentrated. Choosing between
+  measures needs evaluation studies.
+* **Situations depend on the conditions we chose.** A different set of conditions would give somewhat different
+  groups. We explain every exclusion above.
+* **Groups overlap.** They are stable but not sharply separated (silhouette `r sprintf("%.2f", val$silhouette)`).
+* **Injury crashes only.** Crashes with only property damage aren't in the data.
+* **Recording gaps.** `r pct(pr(c_poor)$share)` of crashes have key conditions missing, mostly minor crashes.
+
+# Conclusion
+
+Victoria's official crash categories describe **how** crashes happen. This project shows that **the situation a crash
+happens in decides how likely it is to kill someone**, and that the official categories hide it. Within one category
+the death rate varied `r fold`-fold depending on the situation.
+
+The most common crashes, at city intersections, are not the most deadly. **High-speed rural roads and night-time
+driving account for `r pct(top2_deaths)` of the `r num(total_deaths)` deaths in the data** from only
+`r pct(top2_share)` of crashes. If road-safety effort follows crash counts, it is aimed at the wrong places. If it
+follows deaths by situation, it can be aimed where it saves the most lives.
+
+# Reproducing this report {-}
+
+```
+Rscript run_all.R        # runs R/01-04 and renders this report (about 3 minutes)
+shiny::runApp("app")     # interactive map
+```

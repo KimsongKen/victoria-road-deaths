@@ -1,0 +1,8 @@
+"cluster","top_dca_group","top_dca_share","dca_groups_for_80pct","dca_entropy"
+"1","Vehicles from same direction",0.406995443580809,3,0.64413415355166
+"2","Off path on straight",0.304952215464813,4,0.755365024398812
+"3","Vehicles from adjacent directions (intersection)",0.322987919006296,5,0.783819568008367
+"4","Off path on straight",0.287392957259706,5,0.848913345237415
+"5","Off path on straight",0.228695416327638,5,0.86482006448822
+"6","Pedestrian",0.841417783522689,1,0.291715543970268
+"7","Vehicles from same direction",0.421726315789474,6,0.805577554517606

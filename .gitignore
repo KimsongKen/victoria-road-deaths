@@ -1,0 +1,14 @@
+# Raw crash data is not redistributed; see README for where to download it.
+data/
+*.csv.gz
+
+# Large intermediate outputs, rebuilt by run_all.R
+output/*.rds
+output/story_prompts.txt
+
+# R session and local files
+.Rhistory
+.RData
+.Rproj.user/
+Rplots.pdf
+*.log
